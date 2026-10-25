@@ -1,0 +1,47 @@
+#!/bin/bash
+set -e
+
+echo "=== Configurando Host para GPU Passthrough ==="
+
+# 1. Habilitar IOMMU no Kernel
+if [[ "$1" == "intel" ]]; then
+    IOMMU_OPT="intel_iommu=on"
+elif [[ "$1" == "amd" ]]; then
+    IOMMU_OPT="amd_iommu=on iommu=pt"
+else
+    IOMMU_OPT="intel_iommu=on"
+    echo "Dica: Use 'sudo ./setup-host.sh amd' se tiver GPU AMD"
+fi
+
+GRUB_FILE="/etc/default/grub"
+if grep -q "$IOMMU_OPT" $GRUB_FILE; then
+    echo "IOMMU já habilitado."
+else
+    sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT=\"/GRUB_CMDLINE_LINUX_DEFAULT=\"$IOMMU_OPT \"/" $GRUB_FILE
+    update-grub
+    echo "IOMMU habilitado no GRUB. Reinicie o host para aplicar."
+fi
+
+# 2. Carregar Módulos Necessários
+cat > /etc/modules-load.d/vfio.conf <<EOF
+vfio
+vfio_iommu_type1
+vfio_pci
+EOF
+
+# 3. Configurar Blacklist de Driver Nativo (para NVIDIA/AMD)
+# Identifique a GPU com: lspci -nn | grep VGA
+# Exemplo: 10de:2204 (NVIDIA)
+GPU_VENDOR_ID="${GPU_VENDOR_ID:-10de}"
+GPU_DEVICE_ID="${GPU_DEVICE_ID:-2204}"
+
+cat > /etc/modprobe.d/vfio.conf <<EOF
+options vfio_pci ids=${GPU_VENDOR_ID}:${GPU_DEVICE_ID}
+options vfio enable_dummy_hcd=1
+EOF
+
+echo "=== Configuração de Host Concluída ==="
+echo "1. Reinicie o host."
+echo "2. Verifique os grupos IOMMU: find /sys/kernel/iommu_groups/ -type l"
+echo "3. Identifique o ID da GPU: lspci -nn | grep VGA"
+echo "4. Execute o generate-vm.sh com o GROUP_ID correto."
